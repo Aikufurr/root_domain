@@ -4,22 +4,46 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::collections::HashMap;
 
+use rocket::form::Form;
+use rocket::Data;
 use rocket::fs::NamedFile;
 use rocket::fs::relative;
+use rocket::fs::TempFile;
 
 #[get("/")]
 async fn index() -> Option<NamedFile> {
-    let path = Path::new(relative!("/static/fox.png"));
-    NamedFile::open(&path).await.ok()
+    NamedFile::open(relative!("/static/fox.png")).await.ok()
 }
 
-#[get("/file/<file..>")]
-async fn file(file: PathBuf) -> Option<NamedFile> {
-    let mut path = Path::new(relative!("static/file")).join(file);
+#[get("/files/<file..>")]
+async fn files(file: PathBuf) -> Option<NamedFile> {
+    let mut path = Path::new(relative!("static/files")).join(file);
     if !path.exists() {
         path = Path::new("/drives/LinuxData0/aikufurr/Pictures/c2mec31oelg61.png").to_path_buf();
     }
     NamedFile::open(&path).await.ok()
+}
+
+#[get("/upload")]
+async fn upload_get() -> Option<NamedFile> {
+    NamedFile::open(Path::new(relative!("static/upload.html"))).await.ok()
+}
+
+// #[post("/upload", format = "multipart/form-data", data = "<file>")]
+// async fn upload_post(mut file: Form<TempFile<'_>>) {
+//     let path = Path::new(relative!("static/files")).join(file.name().unwrap().to_owned());
+//     file.persist_to(path).await;
+// }
+
+#[post("/upload", data = "<paste>")]
+fn upload_post(paste: Data) -> Result<String, std::io::Error> {
+    let id = uuid::Uuid::new_v4().to_string().replace("-", "");
+    let filename = format!("upload/{id}", id = id);
+    let url = format!("{host}/{id}\n", host = "http://localhost:8000", id = id);
+
+    // Write the paste out to the file and return the URL.
+    paste.stream_to_file(Path::new(&filename))?;
+    Ok(url)
 }
 
 #[get("/presence?<cmus_base>&<cmus_artist>&<cmus_album>")]
@@ -76,8 +100,7 @@ async fn wordle() -> Option<NamedFile> {
 
 #[catch(404)]
 async fn not_found() -> Option<NamedFile> {
-    let path = Path::new("/drives/LinuxData0/aikufurr/Pictures/c2mec31oelg61.png").to_path_buf();
-    NamedFile::open(&path).await.ok()
+    NamedFile::open("/drives/LinuxData0/aikufurr/Pictures/c2mec31oelg61.png").await.ok()
 }
 
 #[derive(Debug, FromForm, UriDisplayQuery)]
@@ -122,13 +145,13 @@ fn db_get_email(id: &str) -> EmailWebhook {
     eml
 }
 
-fn db_del_email(id: &str) {
-    let conn = sqlite::open("database.db").unwrap();
+// fn db_del_email(id: &str) {
+//     let conn = sqlite::open("database.db").unwrap();
 
-    let mut statement = conn.prepare("DELETE FROM emails WHERE ID = ?").unwrap();
-    statement.bind(1, id).unwrap();
-    statement.next().unwrap();
-}
+//     let mut statement = conn.prepare("DELETE FROM emails WHERE ID = ?").unwrap();
+//     statement.bind(1, id).unwrap();
+//     statement.next().unwrap();
+// }
 
 #[get("/email?<email..>")]
 async fn email_make(email: EmailWebhook) -> String {
@@ -154,10 +177,9 @@ async fn email(id: String) -> Option<NamedFile> {
         Err(_) => {}
     };
 
-    db_del_email(&id);
+    // db_del_email(&id);
 
-    let path = Path::new(relative!("/static/1x1.png")).to_path_buf();
-    NamedFile::open(&path).await.ok()
+    NamedFile::open(relative!("/static/1x1.png")).await.ok()
 }
 
 fn init_db() {
@@ -182,5 +204,5 @@ fn init_db() {
 #[launch]
 fn rocket() -> _ {
     init_db();
-    rocket::build().mount("/", routes![index, file, presence, wordle, email_make, email]).register("/", catchers![not_found])
+    rocket::build().mount("/", routes![index, files, upload_get, upload_post, presence, wordle, email_make, email]).register("/", catchers![not_found])
 }
