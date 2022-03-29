@@ -1,14 +1,15 @@
 #[macro_use] extern crate rocket;
 
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 
-use rocket::form::Form;
-use rocket::Data;
-use rocket::fs::NamedFile;
-use rocket::fs::relative;
-use rocket::fs::TempFile;
+// use std::ffi::CString;
+// use libc::chown;
+
+use rocket::form::{Form, Contextual, FromForm};
+use rocket::fs::{NamedFile, TempFile, relative};
+
+use regex::Regex;
 
 #[get("/")]
 async fn index() -> Option<NamedFile> {
@@ -29,22 +30,50 @@ async fn upload_get() -> Option<NamedFile> {
     NamedFile::open(Path::new(relative!("static/upload.html"))).await.ok()
 }
 
-// #[post("/upload", format = "multipart/form-data", data = "<file>")]
-// async fn upload_post(mut file: Form<TempFile<'_>>) {
-//     let path = Path::new(relative!("static/files")).join(file.name().unwrap().to_owned());
-//     file.persist_to(path).await;
-// }
 
-#[post("/upload", data = "<paste>")]
-fn upload_post(paste: Data) -> Result<String, std::io::Error> {
-    let id = uuid::Uuid::new_v4().to_string().replace("-", "");
-    let filename = format!("upload/{id}", id = id);
-    let url = format!("{host}/{id}\n", host = "http://localhost:8000", id = id);
-
-    // Write the paste out to the file and return the URL.
-    paste.stream_to_file(Path::new(&filename))?;
-    Ok(url)
+#[derive(Debug, FromForm)]
+struct FileStruct<'v> {
+    file: TempFile<'v>,
 }
+
+#[post("/upload", data = "<form>")]
+async fn upload_post<'r>(mut form: Form<Contextual<'r, FileStruct<'r>>>) -> String {
+    let exit_code: String = match form.value {
+        Some(ref mut submission) => {
+            let file = &mut submission.file;
+
+            let upload_path = format!("./static/{}", "files");
+            let file_r = Regex::new(r"(?m)([A-z]*)$").unwrap();
+            let unsafe_name = file.raw_name().unwrap().dangerous_unsafe_unsanitized_raw().as_str();
+            let ext: &str;
+            match file_r.captures(&unsafe_name) {
+                Some(v) => ext = v.get(1).unwrap().as_str(),
+                None => ext = "",
+            }
+            let file_name = file.name().unwrap();
+            if !Path::new(&upload_path).exists() {
+                std::fs::create_dir_all(&upload_path).unwrap();
+            }
+            let filename = format!("{}_{}.{}", uuid::Uuid::new_v4().to_string().replace("-", ""), file_name, ext);
+            let pth = format!("{}/{}", upload_path, &filename);
+            let filepath = Path::new(&pth);
+            file.copy_to(filepath).await.expect("file upload error!");
+            
+            // let file_as_cstring = CString::new(&*filepath.to_str().unwrap()).expect("CString::new failed");
+            // let ptr = file_as_cstring.as_ptr();
+
+            // unsafe {
+            //     chown(ptr, 1000, 1000);
+            // }
+
+            filename
+        }
+        None => "error".to_owned(),
+    };
+
+    exit_code
+}
+
 
 #[get("/presence?<cmus_base>&<cmus_artist>&<cmus_album>")]
 async fn presence(cmus_base: Option<&str>, cmus_artist: Option<&str>, cmus_album: Option<&str>) -> Option<NamedFile> {
@@ -167,6 +196,7 @@ async fn email(id: String) -> Option<NamedFile> {
     map.insert("content", "<@308681202548604938>, your email to `".to_owned() + &details.recipient + "` about `" + &details.subject + "` was read!");
 
     let client = reqwest::Client::new();
+    let response = client.post("https://discord.com/api/webhooks/x/y")
         .json(&map)
         .send()
         .await;
